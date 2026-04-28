@@ -1,7 +1,7 @@
 "use client";
 
 import { X, AlertTriangle, Wind, CloudRain, Gauge, Clock, TrendingDown } from "lucide-react";
-import { cn, riskColor, riskLabel, riskTextClass, pct } from "@/lib/utils";
+import { cn, riskColor, riskLabel, riskTextClass, pct, type RiskTier } from "@/lib/utils";
 import type { RouteSegment, AnomalyScore } from "@/lib/mockData";
 
 interface SegmentDrawerProps {
@@ -20,13 +20,21 @@ const FEATURE_META: Record<string, { icon: React.ReactNode; label: string }> = {
   wind_speed:            { icon: <Wind className="w-3.5 h-3.5" />, label: "High Wind Speed" },
 };
 
+function riskTierFromNumber(risk: number): RiskTier {
+  if (risk >= 0.75) return "RED";
+  if (risk >= 0.5) return "ORANGE";
+  if (risk >= 0.25) return "YELLOW";
+  return "GREEN";
+}
+
 export default function SegmentDrawer({ segment, score, onClose, onReroute }: SegmentDrawerProps) {
   if (!segment || !score) return null;
 
   const risk = score.normalized_risk_probability;
-  const label = riskLabel(risk);
-  const color = riskColor(risk);
-  const textClass = riskTextClass(risk);
+  const tier = riskTierFromNumber(risk);
+  const label = riskLabel(tier);
+  const color = riskColor(tier);
+  const textClass = riskTextClass(tier);
   const isHigh = risk >= 0.75;
 
   return (

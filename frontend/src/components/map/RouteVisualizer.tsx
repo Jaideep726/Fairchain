@@ -3,7 +3,7 @@
 import { useEffect, useRef, useCallback } from "react";
 import mapboxgl from "mapbox-gl";
 import "mapbox-gl/dist/mapbox-gl.css";
-import { riskColor } from "@/lib/utils";
+import { riskColor, type RiskTier } from "@/lib/utils";
 import type { RouteSegment, AnomalyScore, Shipment } from "@/lib/mockData";
 
 interface RouteVisualizerProps {
@@ -25,6 +25,7 @@ function buildSegmentGeoJSON(
     features: segments.map((seg) => {
       const score = scoreMap.get(seg.segment_id);
       const risk = score?.normalized_risk_probability ?? 0;
+      const tier = score?.risk_tier ?? (risk >= 0.75 ? "RED" : risk >= 0.5 ? "ORANGE" : risk >= 0.25 ? "YELLOW" : "GREEN");
 
       // Use the pre-defined geometry with intermediate waypoints if available,
       // otherwise fall back to a straight line between start and end nodes.
@@ -45,7 +46,7 @@ function buildSegmentGeoJSON(
           segment_id: seg.segment_id,
           nh_identifier: seg.nh_identifier,
           risk: risk,
-          color: riskColor(risk),
+          color: riskColor(tier),
           dominant_features: score?.dominant_anomalous_features?.join(", ") ?? "nominal",
           confidence_lo: score?.model_confidence_interval[0] ?? 0,
           confidence_hi: score?.model_confidence_interval[1] ?? 0,

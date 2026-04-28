@@ -11,15 +11,11 @@ POST /gemini/explain — generate human-impact & actionable-advice for a predict
 from __future__ import annotations
 
 import logging
-import sys
-import os
-from typing import List, Optional
+from typing import List
 
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel, Field
 
-# services/ sits one level above backend/
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", ".."))
 from services.gemini_explain import generate_explanation
 
 logger = logging.getLogger(__name__)

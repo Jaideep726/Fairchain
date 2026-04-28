@@ -49,9 +49,10 @@ export default function AnomalyMatrix({
           <tbody>
             {rows.map(({ seg, score }) => {
               const risk = score?.normalized_risk_probability ?? 0;
-              const color = riskColor(risk);
-              const label = riskLabel(risk);
-              const textClass = riskTextClass(risk);
+              const tier = score?.risk_tier ?? (risk >= 0.75 ? "RED" : risk >= 0.5 ? "ORANGE" : risk >= 0.25 ? "YELLOW" : "GREEN");
+              const color = riskColor(tier);
+              const label = riskLabel(tier);
+              const textClass = riskTextClass(tier);
               const isSelected = selectedId === seg.segment_id;
 
               return (

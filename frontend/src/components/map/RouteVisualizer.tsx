@@ -3,7 +3,7 @@
 import { useEffect, useRef, useCallback } from "react";
 import mapboxgl from "mapbox-gl";
 import "mapbox-gl/dist/mapbox-gl.css";
-import { riskColor, type RiskTier } from "@/lib/utils";
+import { riskColor } from "@/lib/utils";
 import type { RouteSegment, AnomalyScore, Shipment } from "@/lib/mockData";
 
 interface RouteVisualizerProps {

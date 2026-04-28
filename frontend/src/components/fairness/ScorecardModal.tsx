@@ -71,12 +71,17 @@ function buildGaugeData(aggregated: ReturnType<typeof aggregateByCategory>) {
 }
 
 // Custom tooltip for bar chart
-function CustomBarTooltip({ active, payload, label }: any) {
+interface TooltipPayloadEntry {
+  name: string;
+  value: number;
+  fill: string;
+}
+function CustomBarTooltip({ active, payload, label }: { active?: boolean; payload?: TooltipPayloadEntry[]; label?: string }) {
   if (!active || !payload?.length) return null;
   return (
     <div className="glass-sm px-3 py-2 text-xs">
       <div className="font-bold text-fc-200 mb-1">{label}</div>
-      {payload.map((p: any) => (
+      {payload.map((p: TooltipPayloadEntry) => (
         <div key={p.name} className="flex items-center gap-2">
           <span className="w-2 h-2 rounded-full flex-shrink-0" style={{ background: p.fill }} />
           <span className="text-muted capitalize">{p.name}:</span>

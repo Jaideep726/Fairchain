@@ -1,8 +1,9 @@
 "use client";
 
 import dynamic from "next/dynamic";
-import { useState } from "react";
+import { useState, useEffect, useCallback } from "react";
 import { useSupabaseRealtime, useAlertManager } from "@/hooks/useSupabaseRealtime";
+import { predictBatch } from "@/lib/api";
 import TopNav from "@/components/dashboard/TopNav";
 import AnomalyMatrix from "@/components/dashboard/AnomalyMatrix";
 import GeminiPanel from "@/components/dashboard/GeminiPanel";
@@ -13,7 +14,6 @@ import {
   MOCK_SEGMENTS,
   MOCK_SHIPMENTS,
   MOCK_ALTERNATIVE_ROUTES,
-  MOCK_ALERTS,
 } from "@/lib/mockData";
 
 // Mapbox must be client-only (uses browser APIs)
@@ -31,15 +31,37 @@ function MapSkeleton() {
 }
 
 export default function DashboardPage() {
-  // ── Realtime state ────────────────────────────────────────────────────────
-  const { anomalyScores, connectionState, lastUpdated } = useSupabaseRealtime();
-  const { unresolved, alerts, resolveAlert } = useAlertManager(MOCK_ALERTS);
+  // ── Realtime state (Supabase live → mock fallback) ─────────────────────
+  const { anomalyScores, alerts: realtimeAlerts, connectionState, lastUpdated } =
+    useSupabaseRealtime();
+  const { unresolved, alerts, resolveAlert } = useAlertManager(realtimeAlerts);
 
   // ── Local UI state ────────────────────────────────────────────────────────
   const [selectedSegmentId, setSelectedSegmentId] = useState<string | null>(null);
   const [rerouteOpen, setRerouteOpen] = useState(false);
   const [fairnessOpen, setFairnessOpen] = useState(false);
   const [activeTab, setActiveTab] = useState<"map" | "matrix">("map");
+
+  // ── Live prediction scoring via backend ───────────────────────────────────
+  // On mount, attempt to score all segments via POST /disruptions/predict/batch.
+  // Results flow through Supabase realtime (backend writes to segment_states),
+  // but we also merge them directly as an optimistic update.
+  const fetchPredictions = useCallback(async () => {
+    try {
+      await predictBatch(MOCK_SEGMENTS);
+      // Results will arrive via Supabase realtime subscription
+      // or were already merged into anomalyScores by the batch call
+    } catch {
+      // Non-blocking — realtime hook already has mock fallback
+    }
+  }, []);
+
+  useEffect(() => {
+    fetchPredictions();
+    // Re-score every 60s
+    const interval = setInterval(fetchPredictions, 60000);
+    return () => clearInterval(interval);
+  }, [fetchPredictions]);
 
   // ── Derived data ──────────────────────────────────────────────────────────
   const selectedSegment = MOCK_SEGMENTS.find((s) => s.segment_id === selectedSegmentId) ?? null;

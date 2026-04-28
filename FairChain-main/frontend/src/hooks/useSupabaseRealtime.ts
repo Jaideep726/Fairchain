@@ -2,6 +2,7 @@
 
 import { useEffect, useRef, useState, useCallback } from "react";
 import { supabase } from "@/lib/supabase";
+import { fetchInitialScores, fetchInitialAlerts } from "@/lib/api";
 import {
   MOCK_ANOMALY_SCORES,
   MOCK_ALERTS,
@@ -57,7 +58,7 @@ export function useSupabaseRealtime(): RealtimeState {
     }, 4000);
   }, []);
 
-  // ── Supabase realtime subscription ──────────────────────────────────────
+  // ── Fetch initial data from Supabase tables, then subscribe ─────────────
   useEffect(() => {
     if (!isConfigured) {
       // Fallback to demo mode
@@ -68,6 +69,36 @@ export function useSupabaseRealtime(): RealtimeState {
       };
     }
 
+    // Fetch initial data from Supabase tables (REST), falling back to mock
+    let cancelled = false;
+
+    async function loadInitialData() {
+      const [scoresResult, alertsResult] = await Promise.all([
+        fetchInitialScores(),
+        fetchInitialAlerts(),
+      ]);
+
+      if (cancelled) return;
+
+      const isLive = scoresResult.live || alertsResult.live;
+
+      setState((prev) => ({
+        ...prev,
+        anomalyScores: scoresResult.data,
+        alerts: alertsResult.data,
+        connectionState: isLive ? prev.connectionState : "demo",
+        lastUpdated: new Date(),
+      }));
+
+      // If REST fetch failed for both, start demo loop as fallback
+      if (!isLive) {
+        startDemoLoop();
+      }
+    }
+
+    loadInitialData();
+
+    // ── Supabase realtime subscription ──────────────────────────────────
     const channel = supabase
       .channel("fairchain-realtime")
       .on(
@@ -77,12 +108,18 @@ export function useSupabaseRealtime(): RealtimeState {
           const incoming = payload.new as AnomalyScore;
           setState((prev) => ({
             ...prev,
-            anomalyScores: prev.anomalyScores.map((s) =>
-              s.segment_id === incoming.segment_id ? { ...s, ...incoming } : s
-            ),
+            anomalyScores: prev.anomalyScores.some(
+              (s) => s.segment_id === incoming.segment_id,
+            )
+              ? prev.anomalyScores.map((s) =>
+                  s.segment_id === incoming.segment_id
+                    ? { ...s, ...incoming }
+                    : s,
+                )
+              : [...prev.anomalyScores, incoming],
             lastUpdated: new Date(),
           }));
-        }
+        },
       )
       .on(
         "postgres_changes",
@@ -94,11 +131,15 @@ export function useSupabaseRealtime(): RealtimeState {
             alerts: [incoming, ...prev.alerts].slice(0, 20),
             lastUpdated: new Date(),
           }));
-        }
+        },
       )
       .subscribe((status) => {
         if (status === "SUBSCRIBED") {
-          setState((prev) => ({ ...prev, connectionState: "live", lastUpdated: new Date() }));
+          setState((prev) => ({
+            ...prev,
+            connectionState: "live",
+            lastUpdated: new Date(),
+          }));
         } else if (status === "CLOSED" || status === "CHANNEL_ERROR") {
           setState((prev) => ({ ...prev, connectionState: "offline" }));
           // Attempt recovery via demo loop
@@ -109,6 +150,7 @@ export function useSupabaseRealtime(): RealtimeState {
     channelRef.current = channel;
 
     return () => {
+      cancelled = true;
       channel.unsubscribe();
       if (demoIntervalRef.current) clearInterval(demoIntervalRef.current);
     };
@@ -121,9 +163,14 @@ export function useSupabaseRealtime(): RealtimeState {
 export function useAlertManager(initialAlerts: GeminiAlert[]) {
   const [alerts, setAlerts] = useState<GeminiAlert[]>(initialAlerts);
 
+  // Sync when initialAlerts changes (e.g. from realtime updates)
+  useEffect(() => {
+    setAlerts(initialAlerts);
+  }, [initialAlerts]);
+
   const resolveAlert = useCallback((id: string) => {
     setAlerts((prev) =>
-      prev.map((a) => (a.id === id ? { ...a, resolved: true } : a))
+      prev.map((a) => (a.id === id ? { ...a, resolved: true } : a)),
     );
   }, []);
 

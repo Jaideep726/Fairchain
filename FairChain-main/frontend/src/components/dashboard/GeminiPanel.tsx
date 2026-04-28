@@ -72,10 +72,18 @@ function AlertCard({
   const config = SEVERITY_CONFIG[alert.severity];
   const { displayed, done } = useTypingAnimation(alert.body, autoType && expanded);
 
-  const timeAgo = (iso: string) => {
-    const diff = Math.floor((Date.now() - new Date(iso).getTime()) / 60000);
-    return diff < 1 ? "just now" : `${diff}m ago`;
-  };
+  // Hydration-safe relative timestamp: render a stable placeholder on the
+  // server, then compute the real value only on the client.
+  const [timeAgoText, setTimeAgoText] = useState("");
+  useEffect(() => {
+    const update = () => {
+      const diff = Math.floor((Date.now() - new Date(alert.created_at).getTime()) / 60000);
+      setTimeAgoText(diff < 1 ? "just now" : `${diff}m ago`);
+    };
+    update();
+    const id = setInterval(update, 30000); // refresh every 30s
+    return () => clearInterval(id);
+  }, [alert.created_at]);
 
   return (
     <div
@@ -112,7 +120,7 @@ function AlertCard({
                 {config.label}
               </span>
               <span className="text-xs text-muted">{alert.nh_identifier}</span>
-              <span className="text-xs text-muted">{timeAgo(alert.created_at)}</span>
+              <span className="text-xs text-muted">{timeAgoText}</span>
             </div>
             <div className="text-sm font-semibold text-fc-200 mt-1 leading-tight">
               {alert.headline}

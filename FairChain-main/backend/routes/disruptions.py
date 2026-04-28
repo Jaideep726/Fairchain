@@ -7,6 +7,7 @@ Endpoints
 ---------
 POST /predict              — score a single route segment
 POST /predict/batch        — score multiple segments in one call
+POST /forecast             — Prophet time-series delay forecast for a segment
 GET  /demo/chennai-replay  — stream the Nov 2023 Chennai Floods simulation
 GET  /model/health         — model load / readiness probe
 
@@ -18,23 +19,41 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import os
 from datetime import datetime, timezone
 from typing import Annotated, Any, Optional
 
 from fastapi import APIRouter, HTTPException, Query
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field, field_validator
+from supabase import create_client, Client as SupabaseClient
 
 from data.feature_engineering import (
     LiveSignals,
     generate_chennai_flood_timeline,
 )
-from models.disruption_model import load_model, validate_chennai_scenario
+from models.disruption_model import load_model, validate_chennai_scenario, get_or_fit_prophet
 from models.predict_pipeline import PredictionResult, risk_tier, run_batch_predictions, run_prediction
 
 logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/disruptions", tags=["disruptions"])
+
+# ---------------------------------------------------------------------------
+# Supabase client (for writing prediction results to segment_states)
+# ---------------------------------------------------------------------------
+_SUPABASE_URL = os.environ.get("SUPABASE_URL", "")
+_SUPABASE_KEY = os.environ.get("SUPABASE_SERVICE_KEY", "")
+_supabase: SupabaseClient | None = None
+
+if _SUPABASE_URL and _SUPABASE_KEY:
+    try:
+        _supabase = create_client(_SUPABASE_URL, _SUPABASE_KEY)
+        logger.info("Supabase client initialised for segment_states writes.")
+    except Exception as exc:
+        logger.warning("Failed to initialise Supabase client: %s", exc)
+else:
+    logger.info("Supabase credentials not set — segment_states writes disabled.")
 
 
 # ---------------------------------------------------------------------------
@@ -192,7 +211,28 @@ async def predict(body: PredictRequest) -> PredictionResponse:
         logger.exception("Prediction failed for segment %s", body.segment.segment_id)
         raise HTTPException(status_code=500, detail="Internal model error") from exc
 
-    return _result_to_response(result)
+    response = _result_to_response(result)
+
+    # Write prediction result to Supabase segment_states table
+    if _supabase is not None:
+        try:
+            _supabase.table("segment_states").upsert(
+                {
+                    "segment_id":                   response.segment_id,
+                    "current_timestamp_utc":         response.current_timestamp_utc,
+                    "isolation_forest_raw_score":    response.isolation_forest_raw_score,
+                    "normalized_risk_probability":   response.normalized_risk_probability,
+                    "dominant_anomalous_features":   response.dominant_anomalous_features,
+                    "model_confidence_interval":     response.model_confidence_interval,
+                    "risk_tier":                     response.risk_tier,
+                },
+                on_conflict="segment_id",
+            ).execute()
+        except Exception as exc:
+            # Non-blocking: log but don't fail the prediction response
+            logger.warning("Supabase write failed for segment %s: %s", response.segment_id, exc)
+
+    return response
 
 
 @router.post(
@@ -325,3 +365,46 @@ async def model_health() -> ModelHealthResponse:
         feature_count=n_features,
         server_utc=datetime.now(timezone.utc).isoformat(),
     )
+
+
+# ---------------------------------------------------------------------------
+# Forecast endpoint (Prophet Tier-2)
+# ---------------------------------------------------------------------------
+
+class ForecastRequest(BaseModel):
+    """Segment payload for Prophet forecasting."""
+    segment: SegmentRequest
+    horizon_hours: list[int] = Field(default=[6, 12, 24], description="Forecast horizons in hours")
+    future_rainfall_mm_6h: float = Field(0.0, ge=0, description="Expected 6h cumulative rainfall (mm)")
+
+
+@router.post(
+    "/forecast",
+    summary="Prophet time-series delay forecast for a segment",
+    description=(
+        "Fits (or retrieves from cache) a Prophet model for the given segment "
+        "and returns 6/12/24-hour delay-disruption probability forecasts "
+        "with confidence intervals and seasonality components."
+    ),
+)
+async def forecast(body: ForecastRequest) -> dict:
+    """
+    Calls get_or_fit_prophet() with the segment payload and returns
+    the ProphetForecastResult as JSON.
+    """
+    segment_dict = body.segment.model_dump()
+
+    try:
+        result = get_or_fit_prophet(
+            segment=segment_dict,
+            horizon_hours=body.horizon_hours,
+            future_rainfall_mm_6h=body.future_rainfall_mm_6h,
+        )
+        return result.to_dict()
+    except ImportError as exc:
+        raise HTTPException(status_code=501, detail=str(exc)) from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    except Exception as exc:
+        logger.exception("Prophet forecast failed for segment %s", body.segment.segment_id)
+        raise HTTPException(status_code=500, detail="Prophet forecast error") from exc

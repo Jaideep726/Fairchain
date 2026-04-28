@@ -25,8 +25,21 @@ function buildSegmentGeoJSON(
     features: segments.map((seg) => {
       const score = scoreMap.get(seg.segment_id);
       const risk = score?.normalized_risk_probability ?? 0;
+
+      // Use the pre-defined geometry with intermediate waypoints if available,
+      // otherwise fall back to a straight line between start and end nodes.
+      const geometry: GeoJSON.LineString = seg.geometry
+        ? seg.geometry
+        : {
+            type: "LineString",
+            coordinates: [
+              [seg.start_node_latlon[1], seg.start_node_latlon[0]],
+              [seg.end_node_latlon[1], seg.end_node_latlon[0]],
+            ],
+          };
+
       return {
-        type: "Feature",
+        type: "Feature" as const,
         id: seg.segment_id,
         properties: {
           segment_id: seg.segment_id,
@@ -37,13 +50,7 @@ function buildSegmentGeoJSON(
           confidence_lo: score?.model_confidence_interval[0] ?? 0,
           confidence_hi: score?.model_confidence_interval[1] ?? 0,
         },
-        geometry: {
-          type: "LineString",
-          coordinates: [
-            [seg.start_node_latlon[1], seg.start_node_latlon[0]],
-            [seg.end_node_latlon[1], seg.end_node_latlon[0]],
-          ],
-        },
+        geometry,
       };
     }),
   };
